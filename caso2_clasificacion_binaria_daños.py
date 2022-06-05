@@ -14,11 +14,12 @@ from tensorflow.keras.applications import InceptionV3, MobileNetV2
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import *
 
-# Nombres de las dos clases
-# class_names = ["no_damage", "minor_repair", "major_repair", "replace"]
-class_names = ["damage", "not_damage"]
 
-# directorio para train y test
+# labels: "no_damage", "minor_repair", "major_repair", "replace"
+# Nombres de las dos clases
+class_names = ["damage", "no_damage"]
+
+# directorio de imagenes para train y test
 dir_imgs = "/home/manusaravia/data/crops/images/"
 
 
@@ -30,14 +31,11 @@ def create_directories(df):
 
     for index, row in df.iterrows():
         if row["image"] in img_list:
-            print("Entro")
             img = Image.open(dir_imgs + row["image"])
-            if row["label"] != "no_damage":
-                img = img.save(dir_imgs + class_names[0] + "/" + row["image"])
-                # img = img.save(dir_imgs + "damage" + "/" + row["image"])
-            else:
+            if row["label"] == "no_damage":
                 img = img.save(dir_imgs + class_names[1] + "/" + row["image"])
-                # img = img.save(dir_imgs + "not_damage" + "/" + row["image"])
+            else:
+                img = img.save(dir_imgs + class_names[0] + "/" + row["image"])
 
 
 def create_inception_model(img_height, img_width):
@@ -47,22 +45,24 @@ def create_inception_model(img_height, img_width):
         include_top=False, weights="imagenet", input_tensor=input_tensor
     )
 
+    # BatchNormalization momentum = 0,9
     for layer in inception_base.layers:
         layer.trainable = True
         if isinstance(layer, BatchNormalization):
             layer.momentum = 0.9
+    
+    #  Layers trainable only last 25 and BatchNormalization
+    for layer in inception_base.layers[:-25]:
+        if not isinstance(layer, BatchNormalization):
+            layer.trainable = False
 
-        # Make all layers upto -25 non-trainable except BatchNorm layers
-        for layer in inception_base.layers[:-25]:
-            if not isinstance(layer, BatchNormalization):
-                layer.trainable = False
-
+    # build model
     x = inception_base.output
     x = GlobalAveragePooling2D()(x)
     x = Dropout(0.1)(x)
     x = Dense(1024, activation="relu")(x)
     x = Dropout(0.2)(x)
-    output_tensor = Dense(len(class_names), activation="softmax")(x)
+    output_tensor = Dense(len(class_names), activation="sigmoid")(x)
 
     model = Model(inputs=input_tensor, outputs=output_tensor)
 
@@ -74,16 +74,18 @@ def create_mobilenet_model(img_height, img_width):
 
     mobilenet_base = MobileNetV2(input_tensor=input_tensor, include_top=False)
 
+    # BatchNormalization momentum = 0,9
     for layer in mobilenet_base.layers:
         layer.trainable = True
         if isinstance(layer, BatchNormalization):
             layer.momentum = 0.9
 
-        # Make all layers upto -25 non-trainable except BatchNorm layers
-        for layer in mobilenet_base.layers[:-25]:
-            if not isinstance(layer, BatchNormalization):
-                layer.trainable = False
+    #  Layers trainable only last 25 and BatchNormalization
+    for layer in mobilenet_base.layers[:-25]:
+        if not isinstance(layer, BatchNormalization):
+            layer.trainable = False
 
+    # build model
     x = mobilenet_base.output
     x = GlobalAveragePooling2D()(x)
     x = Dropout(0.1)(x)
@@ -156,7 +158,7 @@ def fit_model(model, path_model, train_generator, validation_generator):
     return history_inception
 
 
-def show_training_graph(data):
+def show_training_graph(data, TLmodel):
     acc = data.history["accuracy"]
     val_acc = data.history["val_accuracy"]
     loss = data.history["loss"]
@@ -179,7 +181,7 @@ def show_training_graph(data):
     plt.legend(loc="upper right")
 
     plt.show()
-    plt.savefig("/home/manusaravia/data/crops/model_graph.png")
+    plt.savefig("/home/manusaravia/data/crops/model_graph_" + TLmodel + ".png")
 
 
 # Main del problema que llama a varias funciones
@@ -187,12 +189,11 @@ def main(
     input_folder: str = "/home/manusaravia/data/crops",
     batch_size: int = 32,
     isCPU: bool = typer.Option(False, " /--isCPU", " /-d"),
-    isInception: bool = typer.Option(False, " /--isInception", " /-d"),
-    isCreatedDirectories: bool = typer.Option(True, " /--isCreatedDirectories", " /-d"),
-):
+    isInception: bool = typer.Option(False, " /--isMobileNet", " /-d"),
+    isCreatedDirectories: bool = typer.Option(True, " /--isToCreateDirectories", " /-d"),):
 
     df = pd.read_pickle(input_folder + "/annotations.p")
-    df.head
+    #df.head
 
     if not isCreatedDirectories:
         create_directories(df)
@@ -200,11 +201,12 @@ def main(
     if isCPU:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-    config = tf.compat.v1.ConfigProto(
-        gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)
-    )
-    gpus = tf.config.experimental.list_physical_devices("GPU")
-    tf.config.experimental.set_memory_growth(gpus[0], True)
+    else: # GPU
+        config = tf.compat.v1.ConfigProto(
+            gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)
+        )
+        gpus = tf.config.experimental.list_physical_devices("GPU")
+        tf.config.experimental.set_memory_growth(gpus[0], True)
 
     train_dir, val_dir = input_folder + "/images", input_folder + "/images"
 
@@ -222,17 +224,16 @@ def main(
             preprocess, train_dir, val_dir, img_height, img_width, batch_size
         )
 
-        path_model = "model_inceptionv3"
+        path_model = "model_inceptionV3"
 
         history_inception = fit_model(
             model, path_model, train_generator, validation_generator
         )
 
-        show_training_graph(history_inception)
-        # model.save('/home/manusaravia/Insurmapp/history_inception.h5')
+        show_training_graph(history_inception, "inceptionV3")
 
     else:
-        print("<<<< Modelo MobileNet >>>>")
+        print("<<<< Modelo MobileNetV2 >>>>")
         img_height, img_width = 224, 224
         model = create_mobilenet_model(img_height, img_width)
         model.compile(
@@ -245,13 +246,13 @@ def main(
             preprocess, train_dir, val_dir, img_height, img_width, batch_size
         )
 
-        path_model = "model_mobilenet"
+        path_model = "model_mobilenetV2"
 
         history_mobilenet = fit_model(
             model, path_model, train_generator, validation_generator
         )
 
-        show_training_graph(history_mobilenet)
+        show_training_graph(history_mobilenet, "mobilenetV2")
 
 
 if __name__ == "__main__":
