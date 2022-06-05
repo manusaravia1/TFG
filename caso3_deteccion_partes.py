@@ -29,7 +29,7 @@ from detectron2.evaluation.pascal_voc_evaluation import PascalVOCDetectionEvalua
 
 __all__ = ["load_voc_instances", "register_pascal_voc"]
 
-
+# Clases (68)
 CLASS_NAMES = (
     "bonnet",
     "bumper",
@@ -106,17 +106,6 @@ dicts = []
 
 input_dir = "/home/manusaravia/data/part_detection"
 
-isGPU = True
-
-if not isGPU:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
-
-config = tf.compat.v1.ConfigProto(
-    gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)
-)
-gpus = tf.config.experimental.list_physical_devices("GPU")
-tf.config.experimental.set_memory_growth(gpus[0], True)
 
 
 def load_voc_instances(dirname, split, CLASS_NAMES):
@@ -166,69 +155,94 @@ def register_pascal_voc(name, dirname, split, CLASS_NAMES):
         thing_classes=CLASS_NAMES, dirname=dirname, split=split, year=2007
     )
 
+def cfg_trainer():
 
-register_pascal_voc(
-    "my_dataset_train", dirname=input_dir, split="train", CLASS_NAMES=CLASS_NAMES
-)
+    cfg = get_cfg()
+    cfg.merge_from_file(
+        model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_C4_1x.yaml")
+    )
+    cfg.DATASETS.TRAIN = ("my_dataset_train",)
+    cfg.DATASETS.TEST = ("my_dataset_test",)
+    cfg.DATALOADER.NUM_WORKERS = 4
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(
+        "COCO-Detection/faster_rcnn_R_50_C4_1x.yaml"
+    )
+    cfg.SOLVER.BASE_LR = 0.0001
+    cfg.SOLVER.WARMUP_ITERS = 500
+    cfg.SOLVER.MAX_ITER = 15000
+    cfg.SOLVER.STEPS = (2000, 2500)
+    cfg.SOLVER.GAMMA = 0.05
+    cfg.SOLVER.CHECKPOINT_PERIOD = 1000
+    cfg.TEST.EVAL_PERIOD = 2000
+    cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128
+    cfg.SOLVER.IMS_PER_BATCH = 1
+    cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(CLASS_NAMES)
 
-register_pascal_voc(
-    "my_dataset_test", dirname=input_dir, split="test", CLASS_NAMES=CLASS_NAMES
-)
+    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+    trainer = DefaultTrainer(cfg)
+    trainer.resume_or_load(resume=True) # True es sin training solo inferencia
+    trainer.train()
+
+    cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
+
+    return cfg, trainer
+
+# main function
+def main():
+
+    # GPU or not
+    isGPU = True
+
+    if not isGPU:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+    else:
+        config = tf.compat.v1.ConfigProto(
+            gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)
+        )
+        gpus = tf.config.experimental.list_physical_devices("GPU")
+        tf.config.experimental.set_memory_growth(gpus[0], True)
+
+    # register_pascal_voc
+    register_pascal_voc(
+        "my_dataset_train", dirname=input_dir, split="train", CLASS_NAMES=CLASS_NAMES
+    )
+
+    register_pascal_voc(
+        "my_dataset_test", dirname=input_dir, split="test", CLASS_NAMES=CLASS_NAMES
+    )
+
+    # cfg and trainer
+    cfg, trainer = cfg_trainer()
+    predictor = DefaultPredictor(cfg)
+    # evaluator
+    evaluator = COCOEvaluator("my_dataset_test", cfg, False, output_dir="./output/")
+    val_loader = build_detection_test_loader(cfg, "my_dataset_test")
+
+    # print evaluation
+    inference_eval = inference_on_dataset(trainer.model, val_loader, evaluator)
+    print(inference_eval)
+
+    dataset_dicts = DatasetCatalog.get("my_dataset_test")
+    my_metadata = MetadataCatalog.get("my_dataset_test")
+
+    # guardamos el resultado para k imagenes random de test
+    i = 0
+    k = 10
+    for d in random.sample(dataset_dicts, k):
+        i += 1
+        print(f'image{i}: {d["file_name"]}')
+        im = cv2.imread(d["file_name"])
+        outputs = predictor(im)
+        v = Visualizer(im[:, :, ::-1], metadata=my_metadata, scale=0.8)
+        out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
+        plt.imshow(out.get_image())
+        plt.xticks([]), plt.yticks([])
+        plt.show()
+        plt.savefig(input_dir + "/outputs/image" + str(i) + "test.jpg")
 
 
-cfg = get_cfg()
-cfg.merge_from_file(
-    model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_C4_1x.yaml")
-)
-cfg.DATASETS.TRAIN = ("my_dataset_train",)
-cfg.DATASETS.TEST = ("my_dataset_test",)
-cfg.DATALOADER.NUM_WORKERS = 4
-cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(
-    "COCO-Detection/faster_rcnn_R_50_C4_1x.yaml"
-)
-cfg.SOLVER.BASE_LR = 0.0001
-cfg.SOLVER.WARMUP_ITERS = 500
-cfg.SOLVER.MAX_ITER = 15000
-cfg.SOLVER.STEPS = (2000, 2500)
-cfg.SOLVER.GAMMA = 0.05
-cfg.SOLVER.CHECKPOINT_PERIOD = 1000
-cfg.TEST.EVAL_PERIOD = 2000
-cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128
-# cfg.INPUT.MIN_SIZE_TRAIN = 800
-cfg.SOLVER.IMS_PER_BATCH = 1
-cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(CLASS_NAMES)
+if __name__ == "__main__":
+    main()
 
-os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
-trainer = DefaultTrainer(cfg)
-trainer.resume_or_load(resume=True)  # lo cambio a True cuando solo quiero que evalue
-trainer.train()
-
-
-cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
-cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
-predictor = DefaultPredictor(cfg)
-
-# evaluator = PascalVOCDetectionEvaluator("my_dataset_test")
-# con este no me da error y con el propio de pascal si
-evaluator = COCOEvaluator("my_dataset_test", cfg, False, output_dir="./output/")
-val_loader = build_detection_test_loader(cfg, "my_dataset_test")
-print(inference_on_dataset(trainer.model, val_loader, evaluator))
-
-
-dataset_dicts = DatasetCatalog.get("my_dataset_test")
-my_metadata = MetadataCatalog.get("my_dataset_test")
-
-i = 0
-k = 10
-for d in random.sample(dataset_dicts, k):
-    i += 1
-    print(f'image{i}: {d["file_name"]}')
-    im = cv2.imread(d["file_name"])
-    outputs = predictor(im)
-    v = Visualizer(im[:, :, ::-1], metadata=my_metadata, scale=0.8)
-    out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-    # cv2.imshow("image", v.get_image()[:, :, ::-1])
-    plt.imshow(out.get_image())
-    plt.xticks([]), plt.yticks([])
-    plt.show()
-    plt.savefig(input_dir + "/outputs/image" + str(i) + "test.jpg")
