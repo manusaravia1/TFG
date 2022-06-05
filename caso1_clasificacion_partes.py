@@ -14,7 +14,7 @@ from tensorflow.keras.applications import InceptionV3, MobileNetV2
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import *
 
-# Nombres de las siete clases
+# Nombres de las clases (7)
 class_names = [
     "other",
     "chassis_engine_number",
@@ -29,32 +29,18 @@ class_names = [
 dir_train = "/home/manusaravia/Insurmapp/images_big/"
 dir_test = "/home/manusaravia/Insurmapp/images_big_test/"
 
-# Creacion de las subcarpetas necesarias
-def create_train_directories(df):
+# Creacion de las subcarpetas necesarias para train o test
+def create_directories(dir, df):
 
     for clase in class_names:
-        os.mkdir(dir_train + clase)
+        os.mkdir(dir + clase)
 
-    img_list = [image[-26:] for image in glob.glob(dir_train + "*")]
+    img_list = [image[-26:] for image in glob.glob(dir + "*")]
 
     for index, row in df.iterrows():
         if row["image"] in img_list:
-            print("Entro")
-            img = Image.open(dir_train + row["image"])
-            img = img.save(dir_train + row["label"] + "/" + row["image"])
-
-
-def create_test_directories(df):
-    for clase in class_names:
-        os.mkdir(dir_test + clase)
-
-    img_list = [image[-26:] for image in glob.glob(dir_test + "*")]
-
-    for index, row in df.iterrows():
-        if row["image"] in img_list:
-            print("Entro")
-            img = Image.open(dir_test + row["image"])
-            img = img.save(dir_test + row["label"] + "/" + row["image"])
+            img = Image.open(dir + row["image"])
+            img = img.save(dir + row["label"] + "/" + row["image"])
 
 
 def create_inception_model(img_height, img_width):
@@ -64,16 +50,18 @@ def create_inception_model(img_height, img_width):
         include_top=False, weights="imagenet", input_tensor=input_tensor
     )
 
+    # BatchNormalization momentum = 0,9
     for layer in inception_base.layers:
         layer.trainable = True
         if isinstance(layer, BatchNormalization):
             layer.momentum = 0.9
+    
+    #  Layers trainable only last 25 and BatchNormalization
+    for layer in inception_base.layers[:-25]:
+        if not isinstance(layer, BatchNormalization):
+            layer.trainable = False
 
-        # Make all layers upto -25 non-trainable except BatchNorm layers
-        for layer in inception_base.layers[:-25]:
-            if not isinstance(layer, BatchNormalization):
-                layer.trainable = False
-
+    # build model
     x = inception_base.output
     x = GlobalAveragePooling2D()(x)
     x = Dropout(0.1)(x)
@@ -91,16 +79,18 @@ def create_mobilenet_model(img_height, img_width):
 
     mobilenet_base = MobileNetV2(input_tensor=input_tensor, include_top=False)
 
+    # BatchNormalization momentum = 0,9
     for layer in mobilenet_base.layers:
         layer.trainable = True
         if isinstance(layer, BatchNormalization):
             layer.momentum = 0.9
 
-        # Make all layers upto -25 non-trainable except BatchNorm layers
-        for layer in mobilenet_base.layers[:-25]:
-            if not isinstance(layer, BatchNormalization):
-                layer.trainable = False
+    #  Layers trainable only last 25 and BatchNormalization
+    for layer in mobilenet_base.layers[:-25]:
+        if not isinstance(layer, BatchNormalization):
+            layer.trainable = False
 
+    # build model
     x = mobilenet_base.output
     x = GlobalAveragePooling2D()(x)
     x = Dropout(0.1)(x)
@@ -168,7 +158,7 @@ def fit_model(model, path_model, train_generator, validation_generator):
     return history_inception
 
 
-def show_training_graph(data):
+def show_training_graph(data, TLmodel):
     acc = data.history["accuracy"]
     val_acc = data.history["val_accuracy"]
     loss = data.history["loss"]
@@ -191,32 +181,31 @@ def show_training_graph(data):
     plt.legend(loc="upper right")
 
     plt.show()
-    plt.savefig("/home/manusaravia/Insurmapp/model_graph.png")
+    plt.savefig("/home/manusaravia/Insurmapp/model_graph_" + TLmodel + ".png")
 
 
-# Main del problema que llama a varias funciones
+# main function
 def main(
     input_folder: str = "/home/manusaravia/Insurmapp",
     batch_size: int = 32,
     isCPU: bool = typer.Option(False, " /--isCPU", " /-d"),
-    isInception: bool = typer.Option(True, " /--isInception", " /-d"),
-    isCreatedDirectories: bool = typer.Option(True, " /--isCreatedDirectories", " /-d"),
-):
+    isInception: bool = typer.Option(True, " /--isMobileNet", " /-d"),
+    isCreatedDirectories: bool = typer.Option(True, " /--isToCreateDirectories", " /-d"),):
 
     df = pd.read_pickle(input_folder + "/annotations.p")
 
     if not isCreatedDirectories:
-        create_train_directories(df)
-        create_test_directories(df)
+        create_directories(dir_train, df)
+        create_directories(dir_test, df)
 
     if isCPU:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
-    config = tf.compat.v1.ConfigProto(
-        gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)
-    )
-    gpus = tf.config.experimental.list_physical_devices("GPU")
-    tf.config.experimental.set_memory_growth(gpus[0], True)
+    else: # GPU
+        config = tf.compat.v1.ConfigProto(
+            gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)
+        )
+        gpus = tf.config.experimental.list_physical_devices("GPU")
+        tf.config.experimental.set_memory_growth(gpus[0], True)
 
     train_dir, val_dir = input_folder + "/images_big", input_folder + "/images_big_test"
 
@@ -240,8 +229,7 @@ def main(
             model, path_model, train_generator, validation_generator
         )
 
-        show_training_graph(history_inception)
-        # model.save('/home/manusaravia/Insurmapp/history_inception.h5')
+        show_training_graph(history_inception, "inceptionV3")
 
     else:
         print("<<<< Modelo MobileNet >>>>")
@@ -263,7 +251,7 @@ def main(
             model, path_model, train_generator, validation_generator
         )
 
-        show_training_graph(history_mobilenet)
+        show_training_graph(history_mobilenet, "mobilenetV2")
 
 
 if __name__ == "__main__":
