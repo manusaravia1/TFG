@@ -1,6 +1,6 @@
 # TFG
-Repositorio de código del TFG de Manuel Saravia Enrech.<b>
-U-TAD, Grado de Ingeniería de Software
+Repositorio de código del TFG de Manuel Saravia Enrech.
+Grado de Ingeniería de Software, U-TAD.
 
 **Caso 1:**
 Desarrollo de un modelo Deep Learning avanzado para clasificación de imágenes en siete clases o partes de un coche (Car Dashboard, Car Internal, Car Outer, Speedometer Odometer, Document, Chassis Engine Number y Other), apoyándome para ello en los modelos de Transfer Learning InceptionV3 y MobileNetV2
