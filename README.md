@@ -11,5 +11,5 @@ Desarrollo de un modelo Deep Learning avanzado para clasificación binaria de im
 **Caso 3:**
 Desarrollo de un modelo Deep Learning avanzado para detección de hasta 68 partes de coche, apoyándome para ello en este caso en el modelo de Transfer Learning Detectron2.
 
-**Demo Casos 1 y 2**
+**Demo Casos 1 y 2:**
 Ver las interfaces web creadas con gradio para los casos 1 (gradio_7classes_inceptionV3.py) y 2 (gradio_binary_mobilenetV2.py). No se incluyen los ficheros .h5 con los modelos y sus pesos.
